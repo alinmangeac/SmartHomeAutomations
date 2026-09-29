@@ -89,7 +89,7 @@
             <h2 id="tuya-title">Connect Tuya devices</h2>
             <p>Houseflow reads devices linked to your Tuya Cloud project. Pair devices in the Smart Life or Tuya Smart app first.</p>
             <label class="api-key-label" for="api-key">Private API access key</label>
-            <input id="api-key" class="api-key-input" type="password" autocomplete="off" @bind="ApiKey" placeholder="Enter the key configured on the API host" />
+            <input id="api-key" class="api-key-input" type="password" autocomplete="off" @bind="ApiKey" @bind:event="oninput" placeholder="Enter the key configured on the API host" />
             <small class="api-key-help">This stays in this browser tab. Set HOUSEFLOW_API_KEY in Render, then enter that same key here.</small>
             <ol>
                 <li>Create a <strong>Smart Home</strong> cloud project at <a href="https://iot.tuya.com/" target="_blank" rel="noreferrer">Tuya IoT Platform</a> and subscribe to IoT Core.</li>
