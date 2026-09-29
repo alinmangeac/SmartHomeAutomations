@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-labelledby="title description">
+  <title id="title">Houseflow</title>
+  <desc id="description">A flowing line forms a home, with a golden light inside.</desc>
+  <rect width="80" height="80" rx="23" fill="#405E45"/>
+  <path d="M18 37.5 40 19l22 18.5" fill="none" stroke="#F7F6F0" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 35v23a3 3 0 0 0 3 3h26a3 3 0 0 0 3-3V35" fill="none" stroke="#F7F6F0" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M30 48c3.3-4 6.7-4 10 0s6.7 4 10 0" fill="none" stroke="#F7F6F0" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="40" cy="40" r="3.3" fill="#E8B66A"/>
+</svg>

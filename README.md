@@ -1,4 +1,4 @@
-# Hearth Smart Home
+# Houseflow Smart Home
 
 A Blazor WebAssembly app for a personal smart home dashboard and automation hub for Tuya-compatible devices. It runs in the browser and can be hosted as static files on GitHub Pages.
 
