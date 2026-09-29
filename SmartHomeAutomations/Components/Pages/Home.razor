@@ -97,7 +97,7 @@
                 <li>Configure the Houseflow API with the project Access ID, Access Secret, linked account UID, and the project's data center URL.</li>
             </ol>
             <p class="dialog-status">@ApiStatusText</p>
-            <div class="dialog-actions"><button class="secondary-button" @onclick="ConnectAndRefreshAsync" disabled="@Loading || string.IsNullOrWhiteSpace(ApiKey)">@(Loading ? "Connecting…" : "Save for this tab & load")</button><button class="primary-button" @onclick="CloseTuya">Done</button></div>
+            <div class="dialog-actions"><button class="secondary-button" @onclick="ConnectAndRefreshAsync" disabled="@Loading">@(Loading ? "Connecting…" : "Save for this tab & load")</button><button class="primary-button" @onclick="CloseTuya">Done</button></div>
         </section>
     </div>
 }
@@ -187,6 +187,11 @@
     private async Task ConnectAndRefreshAsync()
     {
         ApiKey = ApiKey.Trim();
+        if (string.IsNullOrWhiteSpace(ApiKey))
+        {
+            ApiStatusText = "Enter the API key saved in Render, then select Save for this tab & load.";
+            return;
+        }
         await JS.InvokeVoidAsync("sessionStorage.setItem", "houseflowApiKey", ApiKey);
         await RefreshDevicesAsync();
     }
