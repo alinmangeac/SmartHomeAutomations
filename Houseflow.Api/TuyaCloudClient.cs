@@ -66,7 +66,9 @@ public sealed class TuyaCloudClient(IConfiguration configuration, IHttpClientFac
     {
         var token = withToken ? await GetTokenAsync(ct) : "";
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
-        var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body ?? "")));
+        // Tuya's string-to-sign uses a lowercase SHA-256 hex digest. The final
+        // HMAC signature remains uppercase in Hmac().
+        var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body ?? ""))).ToLowerInvariant();
         var stringToSign = $"{method.Method}\n{bodyHash}\n\n{path}";
         var signInput = withToken ? _accessId + token + timestamp + stringToSign : _accessId + timestamp + stringToSign;
         var signature = Hmac(signInput);
