@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: houseflow-tuya-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Houseflow.Api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/status
+    envVars:
+      - key: TUYA_ACCESS_ID
+        sync: false
+      - key: TUYA_ACCESS_SECRET
+        sync: false
+      - key: TUYA_UID
+        sync: false
+      - key: TUYA_BASE_URL
+        value: https://openapi.tuyaeu.com
+      - key: HOUSEFLOW_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        value: https://alinmangeac.github.io

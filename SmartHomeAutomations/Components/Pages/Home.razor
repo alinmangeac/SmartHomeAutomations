@@ -1,4 +1,8 @@
 @page "/"
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject HttpClient Http
+@inject Microsoft.JSInterop.IJSRuntime JS
 
 <PageTitle>Overview · Houseflow</PageTitle>
 
@@ -9,28 +13,47 @@
             <h1>Good morning, Alin <span class="wave">✳</span></h1>
             <p class="muted">Here’s what’s happening around your home today.</p>
         </div>
-        <button class="primary-button" @onclick="AddAutomation"><span>＋</span> New automation</button>
+        <button class="primary-button" @onclick="OpenTuya"><span>＋</span> Connect devices</button>
     </header>
 
     <section class="status-strip" aria-label="Home status">
         <div class="status-icon weather-icon">☀</div><div><strong>Sunny and mild</strong><small>Outside · 22°</small></div>
         <div class="status-divider"></div>
-        <div class="status-icon">⌂</div><div><strong>Comfortable</strong><small>Living room · 21°</small></div>
-        <div class="status-divider"></div>
-        <div class="status-icon">ϟ</div><div><strong>12.4 kWh</strong><small>Energy today</small></div>
-        <div class="status-grow"></div><span class="connection"><span class="live-dot"></span> All systems normal</span>
+        <div class="status-icon">⌂</div><div><strong>@(Devices.Count == 0 ? "Waiting for devices" : $"{Devices.Count} devices connected")</strong><small>Tuya Cloud</small></div>
+        <div class="status-grow"></div><span class="connection"><span class="live-dot"></span> @ConnectionLabel</span>
     </section>
 
     <div class="section-heading"><div><h2>Your home</h2><p>Everything, at a glance.</p></div><a class="text-link" href="#devices">View all devices <span>→</span></a></div>
-    <section class="device-grid" id="devices">
-        @foreach (var device in Devices)
-        {
-            <article class="device-card @(device.IsOn ? "device-on" : "")">
-                <div class="device-top"><div class="device-icon @device.IconClass">@((MarkupString)device.Icon)</div><button class="toggle @(device.IsOn ? "toggle-on" : "")" role="switch" aria-checked="@device.IsOn" aria-label="Toggle @device.Name" @onclick="() => ToggleDevice(device)"><span></span></button></div>
-                <div class="device-info"><div class="device-room">@device.Room</div><h3>@device.Name</h3><div class="device-value">@device.Value</div></div>
-            </article>
-        }
-    </section>
+    @if (Loading)
+    {
+        <div class="device-empty" role="status">Connecting to your Tuya account…</div>
+    }
+    else if (Devices.Count == 0)
+    {
+        <div class="device-empty"><strong>@(ApiConfigured && string.IsNullOrWhiteSpace(ApiKey) ? "Enter your private API access key" : "No Tuya devices connected yet")</strong><span>@(ApiConfigured && string.IsNullOrWhiteSpace(ApiKey) ? "Your key stays in this browser tab and is not included in the public site." : "Link your Smart Life account, then refresh to bring your devices into Houseflow.")</span><button class="text-link" @onclick="OpenTuya">Connect Tuya devices →</button></div>
+    }
+    else
+    {
+        <section class="device-grid" id="devices">
+            @foreach (var device in Devices)
+            {
+                <article class="device-card @(device.IsOn ? "device-on" : "")">
+                    <div class="device-top"><div class="device-icon icon-amber">@(device.Category.Contains("light", StringComparison.OrdinalIgnoreCase) ? "☼" : "⌂")</div>
+                        @if (device.SwitchCode is not null)
+                        {
+                            <button class="toggle @(device.IsOn ? "toggle-on" : "")" role="switch" aria-checked="@device.IsOn" aria-label="Toggle @device.Name" disabled="@BusyDevices.Contains(device.Id)" @onclick="() => ToggleDeviceAsync(device)"><span></span></button>
+                        }
+                    </div>
+                    <div class="device-info"><div class="device-room">@(string.IsNullOrWhiteSpace(device.Room) ? device.Category : device.Room)</div><h3>@device.Name</h3><div class="device-value">@(device.SwitchCode is null ? "Connected" : device.IsOn ? "On" : "Off")</div></div>
+                </article>
+            }
+        </section>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="api-error" role="alert">@ErrorMessage <button @onclick="RefreshDevicesAsync">Try again</button></div>
+    }
 
     <div class="lower-grid">
         <section class="panel routines-panel" id="routines">
@@ -52,41 +75,161 @@
                     <button class="scene-button @(ActiveScene == scene.Name ? "scene-active" : "")" @onclick="() => ActivateScene(scene.Name)"><span class="scene-icon @scene.IconClass">@scene.Icon</span><strong>@scene.Name</strong><small>@scene.Description</small></button>
                 }
             </div>
-            <div class="tuya-note"><span class="tuya-mark">t</span><div><strong>Connect your Tuya devices</strong><small>Bring all your smart devices together.</small></div><button aria-label="Connect Tuya account">→</button></div>
+            <button class="tuya-note tuya-note-button" @onclick="OpenTuya"><span class="tuya-mark">t</span><span class="tuya-note-copy"><strong>Manage Tuya connection</strong><small>Link your Smart Life devices to Houseflow.</small></span><span class="tuya-arrow">→</span></button>
         </section>
     </div>
 </div>
 
+@if (TuyaDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseTuya" @onclick:stopPropagation="false">
+        <section class="tuya-dialog" role="dialog" aria-modal="true" aria-labelledby="tuya-title" @onclick:stopPropagation="true">
+            <button class="dialog-close" aria-label="Close" @onclick="CloseTuya">×</button>
+            <span class="tuya-mark dialog-mark">t</span>
+            <h2 id="tuya-title">Connect Tuya devices</h2>
+            <p>Houseflow reads devices linked to your Tuya Cloud project. Pair devices in the Smart Life or Tuya Smart app first.</p>
+            <label class="api-key-label" for="api-key">Private API access key</label>
+            <input id="api-key" class="api-key-input" type="password" autocomplete="off" @bind="ApiKey" placeholder="Enter the key configured on the API host" />
+            <small class="api-key-help">This stays in this browser tab. Set HOUSEFLOW_API_KEY in Render, then enter that same key here.</small>
+            <ol>
+                <li>Create a <strong>Smart Home</strong> cloud project at <a href="https://iot.tuya.com/" target="_blank" rel="noreferrer">Tuya IoT Platform</a> and subscribe to IoT Core.</li>
+                <li>In the project, choose <strong>Link Tuya App Account</strong> and scan its QR code from Smart Life or Tuya Smart.</li>
+                <li>Configure the Houseflow API with the project Access ID, Access Secret, linked account UID, and the project's data center URL.</li>
+            </ol>
+            <p class="dialog-status">@ApiStatusText</p>
+            <div class="dialog-actions"><button class="secondary-button" @onclick="ConnectAndRefreshAsync" disabled="@Loading || string.IsNullOrWhiteSpace(ApiKey)">@(Loading ? "Connecting…" : "Save for this tab & load")</button><button class="primary-button" @onclick="CloseTuya">Done</button></div>
+        </section>
+    </div>
+}
+
 @code {
     private string? ActiveScene;
-    private List<Device> Devices = new()
-    {
-        new("Living room", "Ceiling lights", "On · 80%", "☼", "icon-amber", true),
-        new("Living room", "Smart thermostat", "21° · Heating", "⌁", "icon-coral", true),
-        new("Kitchen", "Pendant lights", "Off", "☼", "icon-violet", false),
-        new("Bedroom", "Air purifier", "Auto · Good air", "≋", "icon-mint", true),
-        new("Front door", "Smart lock", "Locked", "▣", "icon-blue", true),
-        new("Office", "Desk lamp", "Off", "☼", "icon-gold", false)
-    };
-    private List<Routine> Routines = new()
-    {
+    private List<TuyaDevice> Devices = [];
+    private bool Loading;
+    private bool ApiConfigured;
+    private bool TuyaDialogOpen;
+    private string ConnectionLabel = "Not connected";
+    private string ApiStatusText = "";
+    private string ApiKey = "";
+    private string? ErrorMessage;
+    private readonly HashSet<string> BusyDevices = [];
+    private List<Routine> Routines =
+    [
         new("Good morning", "Lights on, thermostat to 21°", "7:00 AM", "☀", "icon-amber", true),
         new("Away mode", "Lock doors, turn off lights", "When I leave", "↗", "icon-blue", false),
         new("Wind down", "Dim lights, lower temperature", "10:00 PM", "☾", "icon-violet", true)
-    };
+    ];
     private readonly (string Name, string Description, string Icon, string IconClass)[] Scenes =
-    {
+    [
         ("Relax", "Soft & warm", "☾", "scene-lavender"), ("Focus", "Bright & clear", "✳", "scene-yellow"),
         ("Movie", "Lights down", "▷", "scene-peach"), ("Good night", "Everything off", "☽", "scene-blue")
-    };
-    private void ToggleDevice(Device device) { device.IsOn = !device.IsOn; device.Value = device.IsOn ? "On" : "Off"; }
-    private void ActivateScene(string name) { ActiveScene = name; }
-    private void AddAutomation() { Routines.Add(new Routine("New routine", "Set up your triggers and actions", "Not scheduled", "＋", "icon-blue", true)); }
-    private sealed class Device(string room, string name, string value, string icon, string iconClass, bool isOn)
+    ];
+
+    protected override async Task OnInitializedAsync()
     {
-        public string Room { get; } = room; public string Name { get; } = name; public string Value { get; set; } = value;
-        public string Icon { get; } = icon; public string IconClass { get; } = iconClass; public bool IsOn { get; set; } = isOn;
+        ApiKey = await JS.InvokeAsync<string?>("sessionStorage.getItem", "houseflowApiKey") ?? "";
+        await RefreshDevicesAsync();
     }
+    private void OpenTuya() => TuyaDialogOpen = true;
+    private void CloseTuya() => TuyaDialogOpen = false;
+    private void ActivateScene(string name) => ActiveScene = name;
+    private void AddAutomation() => Routines.Add(new Routine("New routine", "Set up your triggers and actions", "Not scheduled", "＋", "icon-blue", true));
+
+    private async Task RefreshDevicesAsync()
+    {
+        Loading = true;
+        ErrorMessage = null;
+        try
+        {
+            using var statusResponse = await Http.GetAsync("api/status");
+            if (!statusResponse.IsSuccessStatusCode)
+            {
+                ApiConfigured = false;
+                ConnectionLabel = "API not configured";
+                ApiStatusText = "The Houseflow API is not reachable. Deploy the API and set ApiBaseUrl in the Pages app configuration.";
+                Devices = [];
+                return;
+            }
+            var status = await statusResponse.Content.ReadFromJsonAsync<ApiStatus>();
+            ApiConfigured = status?.Configured == true;
+            if (!ApiConfigured)
+            {
+                ConnectionLabel = "API needs setup";
+                ApiStatusText = "The API is online. Add the Tuya project credentials as private environment variables on its host.";
+                Devices = [];
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(ApiKey))
+            {
+                ConnectionLabel = "Access key required";
+                ApiStatusText = "Enter the private Houseflow API key configured on the API host.";
+                Devices = [];
+                return;
+            }
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/devices");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ApiKey);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadApiErrorAsync(response));
+            Devices = await response.Content.ReadFromJsonAsync<List<TuyaDevice>>() ?? [];
+            ConnectionLabel = "Tuya Cloud connected";
+            ApiStatusText = $"Connected. Houseflow found {Devices.Count} linked device{(Devices.Count == 1 ? "" : "s")}.";
+        }
+        catch (Exception ex)
+        {
+            Devices = [];
+            ConnectionLabel = "Connection issue";
+            ApiStatusText = ex.Message;
+            ErrorMessage = ex.Message;
+        }
+        finally { Loading = false; }
+    }
+
+    private async Task ConnectAndRefreshAsync()
+    {
+        ApiKey = ApiKey.Trim();
+        await JS.InvokeVoidAsync("sessionStorage.setItem", "houseflowApiKey", ApiKey);
+        await RefreshDevicesAsync();
+    }
+
+    private async Task ToggleDeviceAsync(TuyaDevice device)
+    {
+        if (device.SwitchCode is null) return;
+        BusyDevices.Add(device.Id);
+        ErrorMessage = null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"api/devices/{Uri.EscapeDataString(device.Id)}/commands")
+            {
+                Content = JsonContent.Create(new { code = device.SwitchCode, value = !device.IsOn })
+            };
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ApiKey);
+            using var response = await Http.SendAsync(request);
+            if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadApiErrorAsync(response));
+            var updated = await response.Content.ReadFromJsonAsync<TuyaDevice>();
+            if (updated is not null)
+            {
+                var index = Devices.FindIndex(d => d.Id == device.Id);
+                if (index >= 0) Devices[index] = updated;
+            }
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+        finally { BusyDevices.Remove(device.Id); }
+    }
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            if (json.RootElement.TryGetProperty("detail", out var detail)) return detail.GetString() ?? "Tuya request failed.";
+            if (json.RootElement.TryGetProperty("message", out var message)) return message.GetString() ?? "Tuya request failed.";
+        }
+        catch (JsonException) { }
+        return $"Houseflow API request failed ({(int)response.StatusCode}).";
+    }
+
+    private sealed record ApiStatus(bool Configured);
+    private sealed record TuyaDevice(string Id, string Name, string Category, string Room, string? SwitchCode, bool IsOn);
     private sealed class Routine(string name, string description, string schedule, string icon, string iconClass, bool isOn)
     {
         public string Name { get; } = name; public string Description { get; } = description; public string Schedule { get; } = schedule;
