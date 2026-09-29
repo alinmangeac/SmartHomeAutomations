@@ -31,8 +31,11 @@ public sealed class TuyaCloudClient(IConfiguration configuration, IHttpClientFac
                 var id = Text(device, "id");
                 if (id.Length == 0) continue;
                 var functions = await GetFunctionsAsync(id, ct);
+                // Tuya returns Boolean on some API versions and bool on others.
+                // Treat both spellings as a writable switch datapoint.
                 var switchCode = functions.Where(f => f.Code.StartsWith("switch", StringComparison.OrdinalIgnoreCase) &&
-                    f.Type.Equals("bool", StringComparison.OrdinalIgnoreCase)).Select(f => f.Code).FirstOrDefault();
+                    (f.Type.Equals("bool", StringComparison.OrdinalIgnoreCase) ||
+                     f.Type.Equals("boolean", StringComparison.OrdinalIgnoreCase))).Select(f => f.Code).FirstOrDefault();
                 var status = device.TryGetProperty("status", out var statusItems) && statusItems.ValueKind == JsonValueKind.Array
                     ? statusItems.EnumerateArray().ToDictionary(item => Text(item, "code"), item => item.TryGetProperty("value", out var val) ? val.Clone() : default, StringComparer.OrdinalIgnoreCase)
                     : new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
