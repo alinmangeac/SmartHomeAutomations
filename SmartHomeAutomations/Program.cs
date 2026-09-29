@@ -6,7 +6,10 @@ var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
-var apiBaseUrl = builder.Configuration["ApiBaseUrl"];
+// Keep a public endpoint fallback for static hosts where runtime appsettings.json
+// may not be served alongside the Blazor app (for example, project Pages sites).
+var apiBaseUrl = builder.Configuration["ApiBaseUrl"]
+    ?? "https://houseflow-tuya-api.onrender.com/";
 var hasApiBaseUrl = Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var apiUri);
 builder.Services.AddScoped(sp => new HttpClient
 {
