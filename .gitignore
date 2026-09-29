@@ -1,0 +1,8 @@
+.dotnet-cli/
+.nuget/
+.wasm-template/
+publish/
+public/
+**/bin/
+**/obj/
+.vs/
