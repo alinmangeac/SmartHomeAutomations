@@ -103,14 +103,14 @@
             <p>Houseflow reads devices linked to your Tuya Cloud project. Pair devices in the Smart Life or Tuya Smart app first.</p>
             <label class="api-key-label" for="api-key">Private API access key</label>
             <input id="api-key" class="api-key-input" type="password" autocomplete="off" @bind="ApiKey" @bind:event="oninput" placeholder="Enter the key configured on the API host" />
-            <small class="api-key-help">This stays in this browser tab. Set HOUSEFLOW_API_KEY in Render, then enter that same key here.</small>
+            <small class="api-key-help">Saved in this browser on this device. Enter the key once on each device you use. Set HOUSEFLOW_API_KEY in Render, then enter that same key here.</small>
             <ol>
                 <li>Create a <strong>Smart Home</strong> cloud project at <a href="https://iot.tuya.com/" target="_blank" rel="noreferrer">Tuya IoT Platform</a> and subscribe to IoT Core.</li>
                 <li>In the project, choose <strong>Link Tuya App Account</strong> and scan its QR code from Smart Life or Tuya Smart.</li>
                 <li>Configure the Houseflow API with the project Access ID, Access Secret, linked account UID, and the project's data center URL.</li>
             </ol>
             <p class="dialog-status">@ApiStatusText</p>
-            <div class="dialog-actions"><button class="secondary-button" @onclick="ConnectAndRefreshAsync" disabled="@Loading">@(Loading ? "Connecting…" : "Save for this tab & load")</button><button class="primary-button" @onclick="CloseTuya">Done</button></div>
+            <div class="dialog-actions"><button class="secondary-button" @onclick="ConnectAndRefreshAsync" disabled="@Loading">@(Loading ? "Connecting…" : "Save on this device & load")</button><button class="primary-button" @onclick="CloseTuya">Done</button></div>
         </section>
     </div>
 }
@@ -152,7 +152,12 @@
     protected override async Task OnInitializedAsync()
     {
         ClockTimer = new System.Threading.Timer(_ => _ = InvokeAsync(() => { LocalNow = DateTime.Now; StateHasChanged(); }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30));
-        ApiKey = await JS.InvokeAsync<string?>("sessionStorage.getItem", "houseflowApiKey") ?? "";
+        ApiKey = await JS.InvokeAsync<string?>("localStorage.getItem", "houseflowApiKey") ?? "";
+        if (string.IsNullOrWhiteSpace(ApiKey))
+        {
+            ApiKey = await JS.InvokeAsync<string?>("sessionStorage.getItem", "houseflowApiKey") ?? "";
+            if (!string.IsNullOrWhiteSpace(ApiKey)) await JS.InvokeVoidAsync("localStorage.setItem", "houseflowApiKey", ApiKey);
+        }
         CityInput = await JS.InvokeAsync<string?>("localStorage.getItem", "houseflowWeatherCity") ?? "Sibiu";
         await LoadWeatherAsync();
         await RefreshDevicesAsync();
@@ -270,7 +275,7 @@
             ApiStatusText = "Enter the API key saved in Render, then select Save for this tab & load.";
             return;
         }
-        await JS.InvokeVoidAsync("sessionStorage.setItem", "houseflowApiKey", ApiKey);
+        await JS.InvokeVoidAsync("localStorage.setItem", "houseflowApiKey", ApiKey);
         await RefreshDevicesAsync();
     }
 
