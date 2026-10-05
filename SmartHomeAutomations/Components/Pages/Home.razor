@@ -2,6 +2,7 @@
 @implements IDisposable
 @using System.Net.Http.Json
 @using System.Text.Json
+@using System.Text.Json.Serialization
 @inject HttpClient Http
 @inject Microsoft.JSInterop.IJSRuntime JS
 
@@ -273,7 +274,9 @@
     private sealed record GeocodingResponse(List<GeoPlace>? Results);
     private sealed record GeoPlace(string Name, string? Country, double Latitude, double Longitude);
     private sealed record WeatherResponse(CurrentWeather? Current);
-    private sealed record CurrentWeather(double Temperature, int WeatherCode);
+    private sealed record CurrentWeather(
+        [property: JsonPropertyName("temperature_2m")] double Temperature,
+        [property: JsonPropertyName("weather_code")] int WeatherCode);
     private sealed record TuyaDevice(string Id, string Name, string Category, string Room, string? SwitchCode, bool IsOn);
     private sealed class Routine(string name, string description, string schedule, string icon, string iconClass, bool isOn)
     {
