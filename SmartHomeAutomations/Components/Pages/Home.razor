@@ -20,7 +20,17 @@
 
     <section class="status-strip" aria-label="Home status">
         <div class="status-icon weather-icon">☀</div><div class="weather-readout"><strong>@WeatherSummary</strong><small>@WeatherLocation · @(WeatherTemperature is null ? "Temperature unavailable" : $"{WeatherTemperature:0.#}°C")</small></div>
-        <div class="weather-picker"><input aria-label="Choose city for weather" list="weather-cities" @bind="CityInput" @bind:event="oninput" @onkeydown="HandleCityKeyDown" placeholder="Choose a city" /><datalist id="weather-cities">@foreach (var city in SuggestedCities) { <option value="@city"></option> }</datalist><button @onclick="LoadWeatherAsync" disabled="@WeatherLoading">@(WeatherLoading ? "…" : "Set")</button></div>
+        <div class="weather-picker"><div class="city-combobox"><input aria-label="Choose a city in Romania for weather" role="combobox" aria-autocomplete="list" aria-expanded="@(CitySuggestions.Count > 0)" aria-controls="city-suggestions" value="@CityInput" @oninput="OnCityInputAsync" @onkeydown="HandleCityKeyDown" placeholder="Search Romanian cities" />
+            @if (CitySuggestions.Count > 0)
+            {
+                <div class="city-suggestions" id="city-suggestions" role="listbox">
+                    @foreach (var place in CitySuggestions)
+                    {
+                        <button type="button" role="option" @onclick="() => SelectCityAsync(place)"><strong>@place.Name</strong><small>@(string.IsNullOrWhiteSpace(place.Admin1) ? "Romania" : $"{place.Admin1}, Romania")</small></button>
+                    }
+                </div>
+            }
+        </div><button @onclick="LoadWeatherAsync" disabled="@WeatherLoading">@(WeatherLoading ? "…" : "Set")</button></div>
         <div class="status-divider"></div>
         <div class="status-icon">⌂</div><div><strong>@(Devices.Count == 0 ? "Waiting for devices" : $"{Devices.Count} devices connected")</strong><small>Tuya Cloud</small></div>
         <div class="status-grow"></div><span class="connection"><span class="live-dot"></span> @ConnectionLabel</span>
@@ -121,9 +131,11 @@
     private string WeatherSummary = "Weather";
     private double? WeatherTemperature;
     private bool WeatherLoading;
+    private List<GeoPlace> CitySuggestions = [];
+    private GeoPlace? SelectedPlace;
+    private CancellationTokenSource? SuggestionSearch;
     private System.Threading.Timer? ClockTimer;
     private string Greeting => LocalNow.Hour < 12 ? "Good morning" : LocalNow.Hour < 18 ? "Good afternoon" : LocalNow.Hour < 22 ? "Good evening" : "Good night";
-    private static readonly string[] SuggestedCities = ["Bucharest", "Cluj-Napoca", "Iași", "Timișoara", "Constanța", "London", "Paris", "New York", "Tokyo", "Sydney"];
     private readonly HashSet<string> BusyDevices = [];
     private List<Routine> Routines =
     [
@@ -146,6 +158,31 @@
         await RefreshDevicesAsync();
     }
     private async Task HandleCityKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") await LoadWeatherAsync(); }
+    private async Task OnCityInputAsync(ChangeEventArgs e)
+    {
+        CityInput = e.Value?.ToString() ?? "";
+        SelectedPlace = null;
+        CitySuggestions = [];
+        SuggestionSearch?.Cancel();
+        if (CityInput.Trim().Length < 2) return;
+        var cts = SuggestionSearch = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(250, cts.Token);
+            var query = Uri.EscapeDataString(CityInput.Trim());
+            var response = await Http.GetFromJsonAsync<GeocodingResponse>($"https://geocoding-api.open-meteo.com/v1/search?name={query}&count=100&language=ro&format=json&countryCode=RO", cts.Token);
+            if (!cts.IsCancellationRequested) CitySuggestions = response?.Results ?? [];
+        }
+        catch (OperationCanceledException) { }
+        catch { CitySuggestions = []; }
+    }
+    private async Task SelectCityAsync(GeoPlace place)
+    {
+        SelectedPlace = place;
+        CityInput = place.Name;
+        CitySuggestions = [];
+        await LoadWeatherAsync();
+    }
     private async Task LoadWeatherAsync()
     {
         var query = CityInput.Trim();
@@ -153,11 +190,15 @@
         WeatherLoading = true;
         try
         {
-            var geo = await Http.GetFromJsonAsync<GeocodingResponse>($"https://geocoding-api.open-meteo.com/v1/search?name={Uri.EscapeDataString(query)}&count=1&language=en&format=json");
-            var place = geo?.Results?.FirstOrDefault();
+            var place = SelectedPlace;
+            if (place is null || !string.Equals(place.Name, query, StringComparison.OrdinalIgnoreCase))
+            {
+                var geo = await Http.GetFromJsonAsync<GeocodingResponse>($"https://geocoding-api.open-meteo.com/v1/search?name={Uri.EscapeDataString(query)}&count=1&language=ro&format=json&countryCode=RO");
+                place = geo?.Results?.FirstOrDefault();
+            }
             if (place is null) { WeatherSummary = "City not found"; WeatherTemperature = null; return; }
             var forecast = await Http.GetFromJsonAsync<WeatherResponse>($"https://api.open-meteo.com/v1/forecast?latitude={place.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}&longitude={place.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}&current=temperature_2m,weather_code");
-            WeatherLocation = string.IsNullOrWhiteSpace(place.Country) ? place.Name : $"{place.Name}, {place.Country}";
+            WeatherLocation = string.IsNullOrWhiteSpace(place.Country) ? $"{place.Name}, Romania" : $"{place.Name}, {place.Country}";
             WeatherTemperature = forecast?.Current?.Temperature;
             WeatherSummary = WeatherDescription(forecast?.Current?.WeatherCode);
             await JS.InvokeVoidAsync("localStorage.setItem", "houseflowWeatherCity", query);
@@ -166,7 +207,7 @@
         finally { WeatherLoading = false; }
     }
     private static string WeatherDescription(int? code) => code switch { 0 => "Clear", 1 or 2 => "Mostly clear", 3 => "Cloudy", 45 or 48 => "Foggy", 51 or 53 or 55 or 56 or 57 => "Drizzle", 61 or 63 or 65 or 66 or 67 => "Rain", 71 or 73 or 75 or 77 => "Snow", 80 or 81 or 82 => "Rain showers", 85 or 86 => "Snow showers", 95 or 96 or 99 => "Thunderstorm", _ => "Weather" };
-    public void Dispose() => ClockTimer?.Dispose();
+    public void Dispose() { ClockTimer?.Dispose(); SuggestionSearch?.Cancel(); SuggestionSearch?.Dispose(); }
     private void OpenTuya() => TuyaDialogOpen = true;
     private void CloseTuya() => TuyaDialogOpen = false;
     private void ActivateScene(string name) => ActiveScene = name;
@@ -272,7 +313,7 @@
 
     private sealed record ApiStatus(bool Configured);
     private sealed record GeocodingResponse(List<GeoPlace>? Results);
-    private sealed record GeoPlace(string Name, string? Country, double Latitude, double Longitude);
+    private sealed record GeoPlace(string Name, string? Country, double Latitude, double Longitude, string? Admin1 = null);
     private sealed record WeatherResponse(CurrentWeather? Current);
     private sealed record CurrentWeather(
         [property: JsonPropertyName("temperature_2m")] double Temperature,
