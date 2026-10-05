@@ -1,4 +1,5 @@
 @page "/"
+@implements IDisposable
 @using System.Net.Http.Json
 @using System.Text.Json
 @inject HttpClient Http
@@ -9,15 +10,16 @@
 <div class="dashboard">
     <header class="welcome-row">
         <div>
-            <div class="eyebrow">@DateTime.Now.ToString("dddd, MMMM d, yyyy").ToUpperInvariant() <span class="live-dot"></span> HOME IS AT HOME</div>
-            <h1>Good morning, Alin <span class="wave">✳</span></h1>
+            <div class="eyebrow">@LocalNow.ToString("dddd, MMMM d, yyyy · HH:mm").ToUpperInvariant() <span class="live-dot"></span> HOME IS AT HOME</div>
+            <h1>@Greeting, Alin <span class="wave">✳</span></h1>
             <p class="muted">Here’s what’s happening around your home today.</p>
         </div>
         <button class="primary-button" @onclick="OpenTuya"><span>＋</span> Connect devices</button>
     </header>
 
     <section class="status-strip" aria-label="Home status">
-        <div class="status-icon weather-icon">☀</div><div><strong>Sunny and mild</strong><small>Outside · 22°</small></div>
+        <div class="status-icon weather-icon">☀</div><div class="weather-readout"><strong>@WeatherSummary</strong><small>@WeatherLocation · @(WeatherTemperature is null ? "Temperature unavailable" : $"{WeatherTemperature:0.#}°C")</small></div>
+        <div class="weather-picker"><input aria-label="Choose city for weather" list="weather-cities" @bind="CityInput" @bind:event="oninput" @onkeydown="HandleCityKeyDown" placeholder="Choose a city" /><datalist id="weather-cities">@foreach (var city in SuggestedCities) { <option value="@city"></option> }</datalist><button @onclick="LoadWeatherAsync" disabled="@WeatherLoading">@(WeatherLoading ? "…" : "Set")</button></div>
         <div class="status-divider"></div>
         <div class="status-icon">⌂</div><div><strong>@(Devices.Count == 0 ? "Waiting for devices" : $"{Devices.Count} devices connected")</strong><small>Tuya Cloud</small></div>
         <div class="status-grow"></div><span class="connection"><span class="live-dot"></span> @ConnectionLabel</span>
@@ -112,6 +114,15 @@
     private string ApiStatusText = "";
     private string ApiKey = "";
     private string? ErrorMessage;
+    private DateTime LocalNow = DateTime.Now;
+    private string CityInput = "Sibiu";
+    private string WeatherLocation = "Sibiu";
+    private string WeatherSummary = "Weather";
+    private double? WeatherTemperature;
+    private bool WeatherLoading;
+    private System.Threading.Timer? ClockTimer;
+    private string Greeting => LocalNow.Hour < 12 ? "Good morning" : LocalNow.Hour < 18 ? "Good afternoon" : LocalNow.Hour < 22 ? "Good evening" : "Good night";
+    private static readonly string[] SuggestedCities = ["Bucharest", "Cluj-Napoca", "Iași", "Timișoara", "Constanța", "London", "Paris", "New York", "Tokyo", "Sydney"];
     private readonly HashSet<string> BusyDevices = [];
     private List<Routine> Routines =
     [
@@ -127,9 +138,34 @@
 
     protected override async Task OnInitializedAsync()
     {
+        ClockTimer = new System.Threading.Timer(_ => _ = InvokeAsync(() => { LocalNow = DateTime.Now; StateHasChanged(); }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30));
         ApiKey = await JS.InvokeAsync<string?>("sessionStorage.getItem", "houseflowApiKey") ?? "";
+        CityInput = await JS.InvokeAsync<string?>("localStorage.getItem", "houseflowWeatherCity") ?? "Sibiu";
+        await LoadWeatherAsync();
         await RefreshDevicesAsync();
     }
+    private async Task HandleCityKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") await LoadWeatherAsync(); }
+    private async Task LoadWeatherAsync()
+    {
+        var query = CityInput.Trim();
+        if (string.IsNullOrWhiteSpace(query)) return;
+        WeatherLoading = true;
+        try
+        {
+            var geo = await Http.GetFromJsonAsync<GeocodingResponse>($"https://geocoding-api.open-meteo.com/v1/search?name={Uri.EscapeDataString(query)}&count=1&language=en&format=json");
+            var place = geo?.Results?.FirstOrDefault();
+            if (place is null) { WeatherSummary = "City not found"; WeatherTemperature = null; return; }
+            var forecast = await Http.GetFromJsonAsync<WeatherResponse>($"https://api.open-meteo.com/v1/forecast?latitude={place.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}&longitude={place.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}&current=temperature_2m,weather_code");
+            WeatherLocation = string.IsNullOrWhiteSpace(place.Country) ? place.Name : $"{place.Name}, {place.Country}";
+            WeatherTemperature = forecast?.Current?.Temperature;
+            WeatherSummary = WeatherDescription(forecast?.Current?.WeatherCode);
+            await JS.InvokeVoidAsync("localStorage.setItem", "houseflowWeatherCity", query);
+        }
+        catch { WeatherSummary = "Weather unavailable"; WeatherTemperature = null; }
+        finally { WeatherLoading = false; }
+    }
+    private static string WeatherDescription(int? code) => code switch { 0 => "Clear", 1 or 2 => "Mostly clear", 3 => "Cloudy", 45 or 48 => "Foggy", 51 or 53 or 55 or 56 or 57 => "Drizzle", 61 or 63 or 65 or 66 or 67 => "Rain", 71 or 73 or 75 or 77 => "Snow", 80 or 81 or 82 => "Rain showers", 85 or 86 => "Snow showers", 95 or 96 or 99 => "Thunderstorm", _ => "Weather" };
+    public void Dispose() => ClockTimer?.Dispose();
     private void OpenTuya() => TuyaDialogOpen = true;
     private void CloseTuya() => TuyaDialogOpen = false;
     private void ActivateScene(string name) => ActiveScene = name;
@@ -234,6 +270,10 @@
     }
 
     private sealed record ApiStatus(bool Configured);
+    private sealed record GeocodingResponse(List<GeoPlace>? Results);
+    private sealed record GeoPlace(string Name, string? Country, double Latitude, double Longitude);
+    private sealed record WeatherResponse(CurrentWeather? Current);
+    private sealed record CurrentWeather(double Temperature, int WeatherCode);
     private sealed record TuyaDevice(string Id, string Name, string Category, string Room, string? SwitchCode, bool IsOn);
     private sealed class Routine(string name, string description, string schedule, string icon, string iconClass, bool isOn)
     {
